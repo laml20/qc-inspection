@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>QC Inspection Capture</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#1b2430;--mut:#667085;--bd:#dfe3e8;--ac:#1f5fbf;--acx:#fff;--ok:#1a7f4b;--okb:#e3f5ea;--wn:#a15c00;--wnb:#fff1d6;--er:#b42318;--erb:#fde4e1;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12161c;--card:#1a2029;--tx:#e8ecf2;--mut:#9aa4b2;--bd:#2c3542;--ac:#6ea2ff;--acx:#0b1220;--ok:#5fd394;--okb:#12301f;--wn:#f5b64a;--wnb:#33260c;--er:#ff8f85;--erb:#3a1714}}
+:root[data-theme="dark"]{--bg:#12161c;--card:#1a2029;--tx:#e8ecf2;--mut:#9aa4b2;--bd:#2c3542;--ac:#6ea2ff;--acx:#0b1220;--ok:#5fd394;--okb:#12301f;--wn:#f5b64a;--wnb:#33260c;--er:#ff8f85;--erb:#3a1714}
+*{box-sizing:border-box}html,body{margin:0}
+body{background:var(--bg);color:var(--tx);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:760px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:0 0 2px}h2{font-size:16px;margin:0 0 8px}
+.mut{color:var(--mut);font-size:13px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px;margin:12px 0}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+input,textarea,select{width:100%;padding:9px 10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx);font:inherit}
+label{font-size:13px;color:var(--mut);display:block;margin:8px 0 3px}
+button{font:inherit;padding:9px 14px;border-radius:8px;border:1px solid var(--bd);background:var(--card);color:var(--tx);cursor:pointer}
+button.p{background:var(--ac);color:var(--acx);border-color:var(--ac);font-weight:600}
+button:disabled{opacity:.45;cursor:not-allowed}
+.shot{display:flex;gap:12px}.shot.lock{opacity:.5}
+.num{flex:none;width:28px;height:28px;border-radius:50%;background:var(--bd);display:grid;place-items:center;font-weight:700;font-size:13px}
+.shot.done .num{background:var(--ok);color:var(--acx)}
+.shot .b{flex:1;min-width:0}
+img.th{width:100%;max-height:240px;object-fit:contain;background:#000;border-radius:8px;margin-top:8px}
+.badge{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;font-weight:700}
+.pass{background:var(--okb);color:var(--ok)}.flag{background:var(--wnb);color:var(--wn)}.reject{background:var(--erb);color:var(--er)}.pend{background:var(--bd);color:var(--mut)}
+ul{margin:6px 0;padding-left:18px}
+.bar{height:8px;background:var(--bd);border-radius:9px;overflow:hidden}.bar i{display:block;height:100%;background:var(--ac)}
+.sum{font-size:18px;font-weight:700;padding:12px;border-radius:10px;text-align:center}
+details summary{cursor:pointer;color:var(--ac)}
+</style>
+</head>
+<body>
+<main>
+<div class="row" style="justify-content:space-between"><div><h1>QC Inspection Capture</h1><div class="mut">Guided photos in sequence, AI review, human sign-off</div></div></div>
+<div id="app"></div>
+</main>
+<script>
+const DEF_GUIDE=`Flag any: foreign objects or loose items; debris, dust, metal shavings or packaging remnants; missing, torn, crooked or illegible labels; missing inspection marks or torque stripes; loose, missing or mismatched hardware; scratches, dents, paint damage, corrosion; exposed or pinched wiring; open or ajar covers.
+Reject a photo (retake needed) if: wrong view, out of focus, too dark or glare hides detail, subject cropped, or serial number unreadable where required.
+When unsure, flag for human review. Do not guess.`;
+const SHOTS=[
+{n:"Nameplate / serial label",g:"Close-up, label fills most of frame, serial number readable.",c:"Serial and rating legible; label straight and undamaged."},
+{n:"Front overall",g:"Stand back so the full front face is in frame, camera at mid-height, level.",c:"Doors/covers closed, no foreign objects, labels and inspection marks present."},
+{n:"Rear overall",g:"Full rear in frame, camera at mid-height, level.",c:"No debris, panels secure, no loose items."},
+{n:"Left side",g:"Full left side in frame, camera square to the panel.",c:"Panels flush, no dents, no loose hardware."},
+{n:"Right side",g:"Full right side in frame, camera square to the panel.",c:"Panels flush, no dents, no loose hardware."},
+{n:"Top",g:"View from above showing the whole top surface.",c:"No tools, debris or packaging remnants; lifting points intact."},
+{n:"Base / lifting points",g:"Low angle showing the base, skids or mounting feet.",c:"Hardware present and tight, no debris underneath."},
+{n:"Hardware close-up",g:"Close-up of fasteners and terminals on the main access area.",c:"Torque marks present, no missing or loose hardware."},
+{n:"Packaging-ready overall",g:"Final overall view of the unit as it will be packaged.",c:"Unit clean, labels and inspection marks complete."}];
+let S={unit:"",fam:"",guide:DEF_GUIDE,shots:SHOTS.map(()=>({})),busy:false,prog:0,sample:null,dl:null,final:null};
+try{const g=localStorage.getItem("qc_guide");if(g)S.guide=g}catch(e){}
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const inp=document.createElement("input");inp.type="file";inp.accept="image/*";inp.setAttribute("capture","environment");
+let cur=-1;
+inp.onchange=async()=>{const f=inp.files[0];inp.value="";if(!f||cur<0)return;const i=cur;
+ const blob=await shrink(f);const s=S.shots[i];if(s.url)URL.revokeObjectURL(s.url);
+ S.shots[i]={blob,url:URL.createObjectURL(blob),at:new Date().toISOString()};S.final=null;render()};
+async function shrink(f){try{const b=await createImageBitmap(f);const k=Math.min(1,1280/Math.max(b.width,b.height));
+ const c=document.createElement("canvas");c.width=Math.round(b.width*k);c.height=Math.round(b.height*k);c.getContext("2d").drawImage(b,0,0,c.width,c.height);
+ return await new Promise(r=>c.toBlob(r,"image/jpeg",.85))}catch(e){return f}}
+function capture(i){cur=i;inp.click()}
+function disp(s){return s.review||(s.ai&&s.ai.status)||null}
+function badge(st){return st?`<span class="badge ${st}">${st.toUpperCase()}</span>`:`<span class="badge pend">NOT ANALYZED</span>`}
+async function analyze(){
+ if(!S.sample)return;S.busy=true;S.final=null;
+ for(let i=0;i<SHOTS.length;i++){const s=S.shots[i];if(!s.blob)continue;S.prog=i+1;render();
+  const sh=SHOTS[i];
+  const p=`You are a QC inspection assistant for finished industrial electrical equipment about to be packaged and shipped.
+Shot: ${sh.n}. Expected view: ${sh.g} Checks for this shot: ${sh.c}
+General guidelines:
+${S.guide}
+Evaluate the attached photo. Respond with ONLY a JSON object, no markdown:
+{"status":"pass|flag|reject","confidence":0.0-1.0,"right_view":true|false,"in_focus":true|false,"findings":[{"issue":"","location":"","severity":"low|medium|high"}],"summary":"one sentence"}
+pass = correct view, clear, no issues. flag = possible defect for a human to review. reject = unusable photo, must be retaken.`;
+  try{const r=await S.sample(p,{images:[s.blob],cache:false});
+   const m=r.text.replace(/```json|```/g,"").match(/\{[\s\S]*\}/);const j=JSON.parse(m[0]);
+   if(!["pass","flag","reject"].includes(j.status))j.status="flag";s.ai=j;s.err=null;s.review=null}
+  catch(e){s.ai={status:"flag",confidence:0,findings:[],summary:"AI could not analyze this photo. Needs manual review."};s.err=e&&e.code}
+  if(s.err==="not_granted"||s.err==="rate_limited")break}
+ S.busy=false;S.prog=0;render()}
+function setRev(i,v){S.shots[i].review=v;S.final=null;render()}
+function note(i,v){S.shots[i].note=v}
+function allDone(){return S.shots.every(s=>s.blob)}
+function report(){return{unit:S.unit,family:S.fam,generated:new Date().toISOString(),outcome:S.final,
+ shots:SHOTS.map((sh,i)=>{const s=S.shots[i];return{order:i+1,shot:sh.n,captured:s.at||null,ai_status:s.ai?.status||null,confidence:s.ai?.confidence??null,findings:s.ai?.findings||[],summary:s.ai?.summary||"",reviewer_override:s.review||null,note:s.note||"",final:disp(s)}})}}
+function finalize(){
+ const st=S.shots.map(disp);S.final=st.every(x=>x==="pass")?"READY TO SHIP":"HOLD: review required";render()}
+async function save(){const d=JSON.stringify(report(),null,2);
+ if(S.dl){try{await S.dl.save({filename:`qc-${S.unit||"unit"}.json`,data:new Blob([d],{type:"application/json"})})}catch(e){}}}
+function reset(){S.shots.forEach(s=>s.url&&URL.revokeObjectURL(s.url));S.shots=SHOTS.map(()=>({}));S.unit="";S.final=null;render()}
+function render(){
+ const done=S.shots.filter(s=>s.blob).length,an=S.shots.filter(s=>s.ai).length;
+ let h=`<div class="card"><h2>1. Unit</h2><div class="row"><div style="flex:1;min-width:150px"><label>Serial / work order</label><input id="u" value="${esc(S.unit)}" placeholder="e.g. WO-12345"></div><div style="flex:1;min-width:150px"><label>Product family</label><input id="f" value="${esc(S.fam)}" placeholder="e.g. Drive cabinet"></div></div>
+ <details style="margin-top:10px"><summary>Inspection guidelines (editable)</summary><label>Sent to the AI with every photo</label><textarea id="g" rows="7">${esc(S.guide)}</textarea></details></div>
+ <div class="card"><h2>2. Capture in order <span class="mut">(${done}/${SHOTS.length})</span></h2><div class="bar"><i style="width:${done/SHOTS.length*100}%"></i></div></div>`;
+ SHOTS.forEach((sh,i)=>{const s=S.shots[i],lock=i>0&&!S.shots[i-1].blob&&!s.blob;
+  h+=`<div class="card shot ${s.blob?"done":""} ${lock?"lock":""}"><div class="num">${i+1}</div><div class="b"><b>${esc(sh.n)}</b> ${s.ai?badge(disp(s)):""}<div class="mut">${esc(sh.g)}</div>
+  ${s.url?`<img class="th" src="${s.url}" alt="${esc(sh.n)}">`:""}
+  <div class="row" style="margin-top:8px"><button class="${s.blob?"":"p"}" ${lock||S.busy?"disabled":""} onclick="capture(${i})">${s.blob?"Retake":"Take photo"}</button></div>`;
+  if(s.ai){const a=s.ai;h+=`<div style="margin-top:10px"><div class="mut">AI confidence ${Math.round((a.confidence||0)*100)}% · view ${a.right_view===false?"wrong":"ok"} · focus ${a.in_focus===false?"poor":"ok"}</div><div>${esc(a.summary)}</div>
+  ${a.findings&&a.findings.length?`<ul>${a.findings.map(f=>`<li><b>${esc(f.issue)}</b>${f.location?` (${esc(f.location)})`:""} <span class="mut">${esc(f.severity||"")}</span></li>`).join("")}</ul>`:""}
+  <div class="row"><span class="mut">Reviewer:</span><button onclick="setRev(${i},'pass')" ${s.review==="pass"?'class="p"':""}>Pass</button><button onclick="setRev(${i},'flag')" ${s.review==="flag"?'class="p"':""}>Flag</button><button onclick="setRev(${i},'reject')" ${s.review==="reject"?'class="p"':""}>Reject</button></div>
+  <input style="margin-top:6px" placeholder="Reviewer note (optional)" value="${esc(s.note)}" oninput="note(${i},this.value)"></div>`}
+  h+=`</div></div>`});
+ h+=`<div class="card"><h2>3. Analyze and sign off</h2>${S.sample?"":`<div class="mut">AI analysis is unavailable in this view. You can still capture photos and record manual reviews.</div>`}
+ <div class="row" style="margin-top:8px"><button class="p" ${!S.sample||!done||S.busy?"disabled":""} onclick="analyze()">${S.busy?`Analyzing ${S.prog}/${SHOTS.length}…`:`Analyze ${done} photo${done===1?"":"s"}`}</button>
+ <button ${!allDone()||an<SHOTS.length||S.busy?"disabled":""} onclick="finalize()">Finalize unit</button></div>
+ <div class="mut" style="margin-top:6px">Finalize needs all ${SHOTS.length} photos captured and analyzed. Any flagged or rejected photo holds the unit until a reviewer passes it. AI assists; a person makes the final call.</div>
+ ${S.final?`<div class="sum ${S.final[0]==="R"?"pass":"flag"}" style="margin-top:10px">${S.final}</div><div class="row" style="margin-top:10px">${S.dl?`<button onclick="save()">Download report (JSON)</button>`:""}<button onclick="reset()">Start next unit</button></div>`:""}</div>`;
+ const act=document.activeElement&&document.activeElement.id;$("app").innerHTML=h;
+ $("u").oninput=e=>S.unit=e.target.value;$("f").oninput=e=>S.fam=e.target.value;
+ $("g").oninput=e=>{S.guide=e.target.value;try{localStorage.setItem("qc_guide",S.guide)}catch(x){}};
+ if(act&&$(act)&&$(act).tagName==="INPUT"){$(act).focus()}}
+render();
+(async()=>{try{if(window.claude){S.sample=await claude.use("sample");S.dl=await claude.use("downloads");render()}}catch(e){}})();
+</script>
+</body>
+</html>
